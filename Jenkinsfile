@@ -1,34 +1,34 @@
 pipeline {
-    agent any           // Tools olarak terraform tanimliyoruz. 
-    tools {                             
+    agent any
+    tools {
         terraform 'terraform'
 }
-    environment {       // env lar Stages lerin altinda da tanimlanir ama sade orada kullanirsin bu sekilde heryerde kullanabilirsin.
-        PATH=sh(script:"echo $PATH:/usr/local/bin", returnStdout:true).trim()       //AWS cli komutlarinin caslimasi icin tanimliyoruz. 
+    environment {
+        PATH=sh(script:"echo $PATH:/usr/local/bin", returnStdout:true).trim()
         AWS_REGION = "us-east-1"
         AWS_ACCOUNT_ID=sh(script:'export PATH="$PATH:/usr/local/bin" && aws sts get-caller-identity --query Account --output text', returnStdout:true).trim()
         ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        APP_REPO_NAME = "jenkins-repo/phonebook-app"            // repo ismini dosyada degistirdiysen burada da degistirmelisin
+        APP_REPO_NAME = "jenkins-repo/phonebook-app"
         APP_NAME = "phonebook"
         CFN_KEYPAIR="neu"
         HOME_FOLDER = "/home/ec2-user"
-        GIT_FOLDER = sh(script:'echo ${GIT_URL} | sed "s/.*\\///;s/.git$//"', returnStdout:true).trim()     // Buradan git repo ismini aliyor sadece.
+        GIT_FOLDER = sh(script:'echo ${GIT_URL} | sed "s/.*\\///;s/.git$//"', returnStdout:true).trim()
     }
     stages {
-        stage('Create ECR Repo') {                  // MUTABLE ecr degistirilebilir. Yani üzerine yazilabilir yoksa devamli ayni isimde gönderemiyoruz.          
+        stage('Create ECR Repo') {                      
             steps {
                 echo 'Creating ECR Repo for App'
                 sh """
                 aws ecr create-repository \
                   --repository-name ${APP_REPO_NAME} \
                   --image-scanning-configuration scanOnPush=false \
-                  --image-tag-mutability MUTABLE \                  
+                  --image-tag-mutability MUTABLE \
                   --region ${AWS_REGION}
                 """
             }
         }
 
-        stage('Build App Docker Image') {           //docker file oldugu yerde image ondan olusturuyor. --force-rm ile olusturdugu gecici (intermedit) conterlari siliyor.
+        stage('Build App Docker Image') {
             steps {
                 echo 'Building App Image'
                 sh 'docker build --force-rm -t "$ECR_REGISTRY/$APP_REPO_NAME:latest" .'
@@ -36,7 +36,7 @@ pipeline {
             }
         }
 
-        stage('Push Image to ECR Repo') {           //aws ecr girebilmek icin password alip. Baglanacagi ECR name login oluyor.
+        stage('Push Image to ECR Repo') {
             steps {
                 echo 'Pushing App Image to ECR Repo'
                 sh 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin "$ECR_REGISTRY"'
@@ -44,7 +44,7 @@ pipeline {
             }
         }
 
-        stage('Create Infrastructure for the App') {        //terraform file daki docker-swarm Ec2 larinin dogru calismasi yapilandiriliyor.
+        stage('Create Infrastructure for the App') {
             steps {
                 echo 'Creating Infrastructure for the App on AWS Cloud'
                 sh 'terraform init'
@@ -65,8 +65,8 @@ pipeline {
             }
         }
 
-        stage('Test the Infrastructure') {          //Burada yapiyi test ediyoruz. Burada döngü kullaniyoruz. Farkli seylerde var bakilabilir.
-                                                    //Viz app den yanit almayi bekliyor. Yanitgelirse devam ediyor. Gelmezse bekliyor.
+        stage('Test the Infrastructure') {
+
              steps {
                  echo "Testing if the Docker Swarm is ready or not, by checking Viz App on Grand Master with Public Ip Address: ${MASTER_INSTANCE_PUBLIC_IP}:8080"
                  script {
@@ -86,7 +86,7 @@ pipeline {
              }
          }
 
-        stage('Deploy App on Docker Swarm'){            //Master baglanip repoyu indiriyor. Sonra docker compose calistiriyor.
+        stage('Deploy App on Docker Swarm'){
             environment {
                 MASTER_INSTANCE_ID=sh(script:'aws ec2 describe-instances --region ${AWS_REGION} --filters Name=tag-value,Values=docker-grand-master Name=instance-state-name,Values=running --query Reservations[*].Instances[*].[InstanceId] --output text', returnStdout:true).trim()
             }
@@ -99,7 +99,7 @@ pipeline {
             }
         }
 
-        stage('Destroy the infrastructure'){    //5 gün birsey yapmazsaniz silecek. Dokümantasyondan aliyoruz.
+        stage('Destroy the infrastructure'){
             steps{
                 timeout(time:5, unit:'DAYS'){
                     input message:'Approve terminate'
@@ -117,7 +117,7 @@ pipeline {
 
     }
 
-    post {                      //Pipeline her zaman sonunra yapamasini istedigim seyle. Hata aldigimizda yapacaklari.
+    post {
         always {
             echo 'Deleting all local images'
             sh 'docker image prune -af'
